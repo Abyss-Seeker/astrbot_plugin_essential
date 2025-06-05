@@ -46,6 +46,9 @@ class Main(Star):
         ]
 
         self.search_anmime_demand_users = {}
+        # SauceNAO API配置
+        self.saucenao_api_key = os.getenv("SAUCENAO_API_KEY", "")
+        self.saucenao_api_url = "https://saucenao.com/search.php"
 
     def time_convert(self, t):
         m, s = divmod(t, 60)
@@ -57,59 +60,77 @@ class Main(Star):
         sender = message.get_sender_id()
         if sender in self.search_anmime_demand_users:
             message_obj = message.message_obj
-            url = "https://api.trace.moe/search?anilistInfo&url="
             image_obj = None
             for i in message_obj.message:
                 if isinstance(i, Image):
                     image_obj = i
                     break
+
+            if not image_obj:
+                if sender in self.search_anmime_demand_users:
+                    del self.search_anmime_demand_users[sender]
+                return CommandResult().error("未找到有效的图片数据")
+
             try:
-                try:
-                    # 需要经过url encode
-                    image_url = urllib.parse.quote(image_obj.url)
-                    url += image_url
-                except BaseException as _:
-                    if sender in self.search_anmime_demand_users:
-                        del self.search_anmime_demand_users[sender]
-                    return CommandResult().error(
-                        f"发现不受本插件支持的图片数据：{type(image_obj)}，插件无法解析。"
-                    )
+                # 使用SauceNAO API
+                params = {
+                    "output_type": 2,  # JSON格式
+                    "api_key": self.saucenao_api_key,
+                    "db": 999,  # 搜索所有数据库
+                    "url": image_obj.url
+                }
 
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(url) as resp:
+                    async with session.get(self.saucenao_api_url, params=params) as resp:
                         if resp.status != 200:
-                            if sender in self.search_anmime_demand_users:
-                                del self.search_anmime_demand_users[sender]
-                            return CommandResult().error("请求失败")
+                            error_msg = f"SauceNAO API请求失败: {resp.status}"
+                            logger.error(error_msg)
+                            return CommandResult().error(error_msg)
                         data = await resp.json()
 
-                if data["result"] and len(data["result"]) > 0:
-                    # 番剧时间转换为x分x秒
-                    data["result"][0]["from"] = self.time_convert(
-                        data["result"][0]["from"]
-                    )
-                    data["result"][0]["to"] = self.time_convert(data["result"][0]["to"])
+                # 处理SauceNAO返回结果
+                if data.get("results") and len(data["results"]) > 0:
+                    best_result = data["results"][0]
+                    header = best_result["header"]
+                    data_part = best_result["data"]
+
+                    # 提取信息
+                    similarity = float(header["similarity"])
+                    source = data_part.get("source") or data_part.get("title") or "未知来源"
+                    author = data_part.get("member_name") or data_part.get("author") or "未知作者"
+                    ext_urls = data_part.get("ext_urls", [])
 
                     warn = ""
-                    if float(data["result"][0]["similarity"]) < 0.8:
+                    if similarity < 80.0:
                         warn = "相似度过低，可能不是同一番剧。建议：相同尺寸大小的截图; 去除四周的黑边\n\n"
+
                     if sender in self.search_anmime_demand_users:
                         del self.search_anmime_demand_users[sender]
+
+                    result_text = (
+                        f"{warn}番名: {source}\n"
+                        f"相似度: {similarity}%\n"
+                        f"作者: {author}\n"
+                    )
+
+                    if ext_urls:
+                        result_text += f"来源: {ext_urls[0]}\n"
+
                     return CommandResult(
-                        chain=[
-                            Plain(
-                                f"{warn}番名: {data['result'][0]['anilist']['title']['native']}\n相似度: {data['result'][0]['similarity']}\n剧集: 第{data['result'][0]['episode']}集\n时间: {data['result'][0]['from']} - {data['result'][0]['to']}\n精准空降截图:"
-                            ),
-                            Image.fromURL(data["result"][0]["image"]),
-                        ],
+                        chain=[Plain(result_text)],
                         use_t2i_=False,
                     )
                 else:
                     if sender in self.search_anmime_demand_users:
                         del self.search_anmime_demand_users[sender]
                     return CommandResult(True, False, [Plain("没有找到番剧")], "sf")
+
+            except aiohttp.ClientError as e:
+                logger.error(f"网络请求异常: {str(e)}")
+                return CommandResult().error("网络连接异常，请稍后重试")
             except Exception as e:
-                raise e
+                logger.exception("搜番处理异常")
+                return CommandResult().error(f"处理失败: {str(e)}")
 
     @filter.command("喜报")
     async def congrats(self, message: AstrMessageEvent):

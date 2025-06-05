@@ -1,0 +1,8 @@
+{
+  "SAUCENAO_API_KEY": {
+    "description": "Saucenao.com API key",
+    "type": "str",
+    "hint": "必填，需要注册后去 https://saucenao.com/user.php?page=search-api 查看获取",
+    "obvious_hint": true
+  }
+}
