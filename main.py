@@ -66,6 +66,7 @@ class Main(Star):
                 if isinstance(i, Image):
                     image_obj = i
                     logger.info("收到图片，正在搜索。。。")
+                    logger.info(f"图片URL: {image_obj.url}")  # 添加图片URL日志
                     break
 
             if not image_obj:
@@ -84,29 +85,42 @@ class Main(Star):
 
                 # 记录请求参数（注意隐藏敏感信息）
                 logger.info(f"准备请求SauceNAO API，URL: {self.saucenao_api_url}")
-                logger.info(f"请求参数: {params}")  # 调试级别日志，避免泄露API Key
+                logger.info(f"请求参数: {params}")  # 注意：这里可能包含敏感信息，生产环境建议使用debug级别
+
+                # 添加微信图片专用Headers（关键修复）
+                headers = {"Referer": "https://weixin.qq.com/"}
 
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(self.saucenao_api_url, params=params) as resp:
+                    async with session.get(self.saucenao_api_url, params=params, headers=headers) as resp:
                         logger.info(f"API响应状态: {resp.status}")
                         if resp.status != 200:
                             error_msg = f"SauceNAO API请求失败: {resp.status}"
                             logger.error(error_msg)
+                            # 尝试获取响应内容以获取更多错误信息
+                            try:
+                                error_content = await resp.text()
+                                logger.error(f"API错误响应内容: {error_content[:500]}")  # 截取前500字符
+                            except:
+                                logger.exception("获取错误响应内容失败")
                             return CommandResult().error(error_msg)
+
                         # 记录响应内容（调试用）
-                        data_text = await resp.text()
-                        logger.debug(f"API原始响应: {data_text}")
                         try:
                             data = await resp.json()
+                            logger.info("成功解析API返回的JSON数据")
                         except Exception as e:
                             logger.error(f"解析JSON失败: {str(e)}")
+                            # 记录原始响应内容以帮助调试
+                            try:
+                                data_text = await resp.text()
+                                logger.debug(f"API原始响应: {data_text[:500]}")  # 截取前500字符
+                            except:
+                                logger.exception("获取原始响应失败")
                             return CommandResult().error("API返回数据格式错误")
-
-                logger.info("成功解析API返回的JSON数据")
 
                 # 处理SauceNAO返回结果
                 if data.get("results") and len(data["results"]) > 0:
-                    logger.info("收到返回结果")
+                    logger.info(f"收到返回结果，找到 {len(data['results'])} 条记录")
                     best_result = data["results"][0]
                     header = best_result["header"]
                     data_part = best_result["data"]
@@ -117,11 +131,15 @@ class Main(Star):
                     author = data_part.get("member_name") or data_part.get("author") or "未知作者"
                     ext_urls = data_part.get("ext_urls", [])
 
+                    logger.info(f"相似度: {similarity}%, 番名: {source}, 作者: {author}")
+
                     warn = ""
                     if similarity < 80.0:
                         warn = "相似度过低，可能不是同一番剧。建议：相同尺寸大小的截图; 去除四周的黑边\n\n"
+                        logger.warning("相似度过低警告")
 
                     if sender in self.search_anmime_demand_users:
+                        logger.info("清除用户搜番状态")
                         del self.search_anmime_demand_users[sender]
 
                     result_text = (
@@ -132,8 +150,9 @@ class Main(Star):
 
                     if ext_urls:
                         result_text += f"来源: {ext_urls[0]}\n"
+                        logger.info(f"来源链接: {ext_urls[0]}")
 
-                    logger.info(f"搜番结果: {result_text}")
+                    logger.info("返回搜番结果")
                     return CommandResult(
                         chain=[Plain(result_text)],
                         use_t2i_=False,
