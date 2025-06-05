@@ -19,7 +19,7 @@ logger = logging.getLogger("astrbot")
 
 @register("astrbot_plugin_essential", "Soulter", "", "", "")
 class Main(Star):
-    def __init__(self, context: Context) -> None:
+    def __init__(self, context: Context, config: AstrBotConfig) -> None:
         super().__init__(context)
         self.PLUGIN_NAME = "astrbot_plugin_essential"
         PLUGIN_NAME = self.PLUGIN_NAME
