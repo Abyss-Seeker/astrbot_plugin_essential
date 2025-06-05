@@ -59,6 +59,7 @@ class Main(Star):
     async def handle_search_anime(self, message: AstrMessageEvent):
         """检查是否有搜番请求"""
         sender = message.get_sender_id()
+        logger.info("收到图片，正在搜索。。。")
         if sender in self.search_anmime_demand_users:
             message_obj = message.message_obj
             image_obj = None
@@ -91,6 +92,7 @@ class Main(Star):
 
                 # 处理SauceNAO返回结果
                 if data.get("results") and len(data["results"]) > 0:
+                    logger.info("收到返回结果")
                     best_result = data["results"][0]
                     header = best_result["header"]
                     data_part = best_result["data"]
