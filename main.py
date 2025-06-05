@@ -82,13 +82,27 @@ class Main(Star):
                     "url": image_obj.url
                 }
 
+                # 记录请求参数（注意隐藏敏感信息）
+                logger.info(f"准备请求SauceNAO API，URL: {self.saucenao_api_url}")
+                logger.debug(f"请求参数: {params}")  # 调试级别日志，避免泄露API Key
+
                 async with aiohttp.ClientSession() as session:
                     async with session.get(self.saucenao_api_url, params=params) as resp:
+                        logger.info(f"API响应状态: {resp.status}")
                         if resp.status != 200:
                             error_msg = f"SauceNAO API请求失败: {resp.status}"
                             logger.error(error_msg)
                             return CommandResult().error(error_msg)
-                        data = await resp.json()
+                        # 记录响应内容（调试用）
+                        data_text = await resp.text()
+                        logger.debug(f"API原始响应: {data_text}")
+                        try:
+                            data = await resp.json()
+                        except Exception as e:
+                            logger.error(f"解析JSON失败: {str(e)}")
+                            return CommandResult().error("API返回数据格式错误")
+
+                logger.info("成功解析API返回的JSON数据")
 
                 # 处理SauceNAO返回结果
                 if data.get("results") and len(data["results"]) > 0:
@@ -119,11 +133,13 @@ class Main(Star):
                     if ext_urls:
                         result_text += f"来源: {ext_urls[0]}\n"
 
+                    logger.info(f"搜番结果: {result_text}")
                     return CommandResult(
                         chain=[Plain(result_text)],
                         use_t2i_=False,
                     )
                 else:
+                    logger.info("API返回结果为空")
                     if sender in self.search_anmime_demand_users:
                         del self.search_anmime_demand_users[sender]
                     return CommandResult(True, False, [Plain("没有找到番剧")], "sf")
