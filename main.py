@@ -12,6 +12,7 @@ from PIL import ImageFont as PILImageFont
 from astrbot.api.all import AstrMessageEvent, CommandResult, Context, Image, Plain
 import astrbot.api.event.filter as filter
 from astrbot.api.star import register, Star
+from astrbot.core.config.astrbot_config import AstrBotConfig
 
 logger = logging.getLogger("astrbot")
 
@@ -47,7 +48,7 @@ class Main(Star):
 
         self.search_anmime_demand_users = {}
         # SauceNAO API配置
-        self.saucenao_api_key = os.getenv("SAUCENAO_API_KEY", "")
+        self.saucenao_api_key = config.get("cooldown")
         self.saucenao_api_url = "https://saucenao.com/search.php"
 
     def time_convert(self, t):
