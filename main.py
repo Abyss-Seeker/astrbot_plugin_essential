@@ -59,13 +59,13 @@ class Main(Star):
     async def handle_search_anime(self, message: AstrMessageEvent):
         """检查是否有搜番请求"""
         sender = message.get_sender_id()
-        logger.info("收到图片，正在搜索。。。")
         if sender in self.search_anmime_demand_users:
             message_obj = message.message_obj
             image_obj = None
             for i in message_obj.message:
                 if isinstance(i, Image):
                     image_obj = i
+                    logger.info("收到图片，正在搜索。。。")
                     break
 
             if not image_obj:
