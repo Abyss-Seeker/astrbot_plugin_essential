@@ -61,13 +61,21 @@ class Main(Star):
         sender = message.get_sender_id()
         if sender in self.search_anmime_demand_users:
             message_obj = message.message_obj
+            url = "https://api.trace.moe/search?anilistInfo&url="
             image_obj = None
-            for i in message_obj.message:
-                if isinstance(i, Image):
-                    image_obj = i
-                    logger.info("收到图片，正在搜索。。。")
-                    logger.info(f"图片URL: {image_obj.url}")  # 添加图片URL日志
+
+            # 遍历消息链寻找图片（兼容所有平台）
+            for comp in message_obj.message:
+                if isinstance(comp, Image):
+                    image_obj = comp
                     break
+
+            # 微信平台特殊处理
+            if not image_obj and message.get_platform_name() in ["gewechat", "wechatpadpro"]:
+                raw_msg = message.message_obj.raw_message
+                # 尝试从微信原始消息提取图片
+                if 'image' in raw_msg:
+                    image_obj = Image.fromURL(raw_msg['image'])
 
             if not image_obj:
                 if sender in self.search_anmime_demand_users:
@@ -75,6 +83,22 @@ class Main(Star):
                 return CommandResult().error("未找到有效的图片数据")
 
             try:
+                # 微信图片需要特殊处理
+                image_url = image_obj.url
+                if message.get_platform_name() in ["gewechat", "wechatpadpro"]:
+                    # 添加微信专用Headers
+                    headers = {"Referer": "https://weixin.qq.com/"}
+                    # 下载图片到本地（避免URL访问限制）
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(image_url, headers=headers) as resp:
+                            if resp.status == 200:
+                                with open("temp_wechat_img.jpg", "wb") as f:
+                                    f.write(await resp.read())
+                                image_url = "file://" + os.path.abspath("temp_wechat_img.jpg")
+
+                # URL编码
+                encoded_url = urllib.parse.quote(image_url)
+                url += encoded_url
                 # 使用SauceNAO API
                 params = {
                     "output_type": 2,  # JSON格式
