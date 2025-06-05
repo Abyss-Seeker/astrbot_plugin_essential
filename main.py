@@ -84,7 +84,7 @@ class Main(Star):
 
                 # 记录请求参数（注意隐藏敏感信息）
                 logger.info(f"准备请求SauceNAO API，URL: {self.saucenao_api_url}")
-                logger.debug(f"请求参数: {params}")  # 调试级别日志，避免泄露API Key
+                logger.info(f"请求参数: {params}")  # 调试级别日志，避免泄露API Key
 
                 async with aiohttp.ClientSession() as session:
                     async with session.get(self.saucenao_api_url, params=params) as resp:
