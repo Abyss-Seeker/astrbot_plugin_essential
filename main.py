@@ -72,7 +72,6 @@ class Main(Star):
             # 微信平台特殊处理
             if not image_obj and message.get_platform_name() in ["gewechat", "wechatpadpro"]:
                 raw_msg = message.message_obj.raw_message
-                # 尝试从微信原始消息提取图片
                 if 'image' in raw_msg:
                     image_obj = Image.fromURL(raw_msg['image'])
 
@@ -82,54 +81,81 @@ class Main(Star):
                 return CommandResult().error("未找到有效的图片数据")
 
             try:
-                # 微信图片需要特殊处理
-                image_url = image_obj.url
-                if message.get_platform_name() in ["gewechat", "wechatpadpro"]:
-                    # 添加微信专用Headers
-                    headers = {"Referer": "https://weixin.qq.com/"}
-                    # 下载图片到本地（避免URL访问限制）
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(image_url, headers=headers) as resp:
-                            if resp.status == 200:
-                                image_data = await resp.read()
-                                with open("temp_wechat_img.jpg", "wb") as f:
-                                    f.write(image_data)
-                                image_url = "file://" + os.path.abspath("temp_wechat_img.jpg")
-                            else:
-                                logger.error(f"微信图片下载失败: {resp.status}")
-                                return CommandResult().error("图片下载失败，请重试")
+                # ==== 关键修复部分 ====
+                temp_file = None
+                headers = {
+                    "Referer": "https://weixin.qq.com/",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+                }
 
-                # 使用SauceNAO API - 改用POST请求
+                # 微信平台强制下载图片到本地
+                if message.get_platform_name() in ["gewechat", "wechatpadpro"]:
+                    temp_file = "temp_wechat_img.jpg"
+                    logger.info(f"开始下载微信图片: {image_obj.url}")
+
+                    for attempt in range(3):  # 增加重试机制
+                        try:
+                            async with aiohttp.ClientSession() as session:
+                                async with session.get(image_obj.url, headers=headers, timeout=10) as resp:
+                                    if resp.status != 200:
+                                        logger.error(f"图片下载失败 HTTP {resp.status}")
+                                        continue
+                                    with open(temp_file, "wb") as f:
+                                        f.write(await resp.read())
+                                    logger.info("微信图片下载成功")
+                                    break
+                        except (aiohttp.ClientConnectionError, asyncio.TimeoutError) as e:
+                            logger.warning(f"图片下载失败(尝试 {attempt + 1}/3): {str(e)}")
+                            if attempt == 2:
+                                raise
+                            await asyncio.sleep(1)
+                else:
+                    temp_file = image_obj.url
+
+                # 使用POST表单上传图片数据（关键修复）
                 form_data = aiohttp.FormData()
-                form_data.add_field('url',
-                                    image_url)  # 或者使用文件上传：form_data.add_field('file', open("temp_wechat_img.jpg", 'rb'), filename='image.jpg', content_type='image/jpeg')
+
+                # 微信平台使用文件上传，其他平台使用URL
+                if message.get_platform_name() in ["gewechat", "wechatpadpro"]:
+                    form_data.add_field('file',
+                                        open(temp_file, 'rb'),
+                                        filename='image.jpg',
+                                        content_type='image/jpeg')
+                else:
+                    form_data.add_field('url', temp_file)
+
+                # 添加API参数
                 form_data.add_field('api_key', self.saucenao_api_key)
                 form_data.add_field('db', '999')
                 form_data.add_field('output_type', '2')
 
-                logger.info(f"准备请求SauceNAO API，URL: {self.saucenao_api_url}")
+                # 设置超时和SSL配置
+                connector = aiohttp.TCPConnector(ssl=False)
+                timeout = aiohttp.ClientTimeout(total=15, connect=5)
 
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(self.saucenao_api_url, data=form_data) as resp:
+                logger.info(f"准备请求SauceNAO API: {self.saucenao_api_url}")
+                async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+                    async with session.post(
+                            self.saucenao_api_url,
+                            data=form_data,
+                            headers=headers
+                    ) as resp:
                         logger.info(f"API响应状态: {resp.status}")
                         if resp.status != 200:
                             error_msg = f"SauceNAO API请求失败: {resp.status}"
                             logger.error(error_msg)
-                            # 尝试获取响应内容以获取更多错误信息
                             try:
                                 error_content = await resp.text()
-                                logger.error(f"API错误响应内容: {error_content[:500]}")
+                                logger.error(f"API错误响应: {error_content[:500]}")
                             except:
-                                logger.exception("获取错误响应内容失败")
-                            return CommandResult().error(error_msg)
+                                logger.exception("获取错误响应失败")
+                            return CommandResult().error(f"API服务错误({resp.status})")
 
-                        # 记录响应内容（调试用）
                         try:
                             data = await resp.json()
                             logger.info("成功解析API返回的JSON数据")
                         except Exception as e:
                             logger.error(f"解析JSON失败: {str(e)}")
-                            # 记录原始响应内容以帮助调试
                             try:
                                 data_text = await resp.text()
                                 logger.debug(f"API原始响应: {data_text[:500]}")
@@ -139,7 +165,7 @@ class Main(Star):
 
                 # 处理SauceNAO返回结果
                 if data.get("results") and len(data["results"]) > 0:
-                    logger.info(f"收到返回结果，找到 {len(data['results'])} 条记录")
+                    logger.info(f"找到 {len(data['results'])} 条记录")
                     best_result = data["results"][0]
                     header = best_result["header"]
                     data_part = best_result["data"]
@@ -182,12 +208,31 @@ class Main(Star):
                         del self.search_anmime_demand_users[sender]
                     return CommandResult(True, False, [Plain("没有找到番剧")], "sf")
 
-            except aiohttp.ClientError as e:
-                logger.error(f"网络请求异常: {type(e).__name__} - {str(e)}")
-                return CommandResult().error("网络连接异常，请稍后重试")
+            # ==== 增强异常处理 ====
+            except aiohttp.InvalidURL as e:
+                logger.error(f"URL格式错误: {str(e)}")
+                return CommandResult().error("图片URL无效，请重试")
+            except aiohttp.ClientConnectionError as e:
+                logger.error(f"连接失败: {str(e)}")
+                return CommandResult().error("无法连接服务器，请检查网络")
+            except aiohttp.ClientTimeout as e:
+                logger.error(f"请求超时: {str(e)}")
+                return CommandResult().error("响应超时，请重试或更换图片")
+            except aiohttp.ClientResponseError as e:
+                logger.error(f"HTTP错误 {e.status}: {e.message}")
+                return CommandResult().error(f"服务器错误({e.status})")
             except Exception as e:
                 logger.exception("搜番处理异常")
                 return CommandResult().error(f"处理失败: {str(e)}")
+            finally:
+                # 清理临时文件
+                if (message.get_platform_name() in ["gewechat", "wechatpadpro"] and
+                        temp_file and os.path.exists(temp_file)):
+                    try:
+                        os.remove(temp_file)
+                        logger.info("临时文件已清理")
+                    except Exception as e:
+                        logger.warning(f"删除临时文件失败: {str(e)}")
 
     @filter.command("喜报")
     async def congrats(self, message: AstrMessageEvent):
