@@ -61,7 +61,6 @@ class Main(Star):
         sender = message.get_sender_id()
         if sender in self.search_anmime_demand_users:
             message_obj = message.message_obj
-            url = "https://api.trace.moe/search?anilistInfo&url="
             image_obj = None
 
             # 遍历消息链寻找图片（兼容所有平台）
@@ -92,30 +91,26 @@ class Main(Star):
                     async with aiohttp.ClientSession() as session:
                         async with session.get(image_url, headers=headers) as resp:
                             if resp.status == 200:
+                                image_data = await resp.read()
                                 with open("temp_wechat_img.jpg", "wb") as f:
-                                    f.write(await resp.read())
+                                    f.write(image_data)
                                 image_url = "file://" + os.path.abspath("temp_wechat_img.jpg")
+                            else:
+                                logger.error(f"微信图片下载失败: {resp.status}")
+                                return CommandResult().error("图片下载失败，请重试")
 
-                # URL编码
-                encoded_url = urllib.parse.quote(image_url)
-                url += encoded_url
-                # 使用SauceNAO API
-                params = {
-                    "output_type": 2,  # JSON格式
-                    "api_key": self.saucenao_api_key,
-                    "db": 999,  # 搜索所有数据库
-                    "url": image_obj.url
-                }
+                # 使用SauceNAO API - 改用POST请求
+                form_data = aiohttp.FormData()
+                form_data.add_field('url',
+                                    image_url)  # 或者使用文件上传：form_data.add_field('file', open("temp_wechat_img.jpg", 'rb'), filename='image.jpg', content_type='image/jpeg')
+                form_data.add_field('api_key', self.saucenao_api_key)
+                form_data.add_field('db', '999')
+                form_data.add_field('output_type', '2')
 
-                # 记录请求参数（注意隐藏敏感信息）
                 logger.info(f"准备请求SauceNAO API，URL: {self.saucenao_api_url}")
-                logger.info(f"请求参数: {params}")  # 注意：这里可能包含敏感信息，生产环境建议使用debug级别
-
-                # 添加微信图片专用Headers（关键修复）
-                headers = {"Referer": "https://weixin.qq.com/"}
 
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(self.saucenao_api_url, params=params, headers=headers) as resp:
+                    async with session.post(self.saucenao_api_url, data=form_data) as resp:
                         logger.info(f"API响应状态: {resp.status}")
                         if resp.status != 200:
                             error_msg = f"SauceNAO API请求失败: {resp.status}"
@@ -123,7 +118,7 @@ class Main(Star):
                             # 尝试获取响应内容以获取更多错误信息
                             try:
                                 error_content = await resp.text()
-                                logger.error(f"API错误响应内容: {error_content[:500]}")  # 截取前500字符
+                                logger.error(f"API错误响应内容: {error_content[:500]}")
                             except:
                                 logger.exception("获取错误响应内容失败")
                             return CommandResult().error(error_msg)
@@ -137,7 +132,7 @@ class Main(Star):
                             # 记录原始响应内容以帮助调试
                             try:
                                 data_text = await resp.text()
-                                logger.debug(f"API原始响应: {data_text[:500]}")  # 截取前500字符
+                                logger.debug(f"API原始响应: {data_text[:500]}")
                             except:
                                 logger.exception("获取原始响应失败")
                             return CommandResult().error("API返回数据格式错误")
@@ -188,7 +183,7 @@ class Main(Star):
                     return CommandResult(True, False, [Plain("没有找到番剧")], "sf")
 
             except aiohttp.ClientError as e:
-                logger.error(f"网络请求异常: {str(e)}")
+                logger.error(f"网络请求异常: {type(e).__name__} - {str(e)}")
                 return CommandResult().error("网络连接异常，请稍后重试")
             except Exception as e:
                 logger.exception("搜番处理异常")
