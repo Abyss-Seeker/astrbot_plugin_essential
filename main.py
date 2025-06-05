@@ -48,7 +48,7 @@ class Main(Star):
 
         self.search_anmime_demand_users = {}
         # SauceNAO API配置
-        self.saucenao_api_key = config.get("cooldown")
+        self.saucenao_api_key = config.get("SAUCENAO_API_KEY")
         self.saucenao_api_url = "https://saucenao.com/search.php"
 
     def time_convert(self, t):
